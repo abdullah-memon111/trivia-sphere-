@@ -56,7 +56,7 @@ export default function App() {
       setTimeLeft(20);
     } catch (err) {
       console.error(err);
-      setError("Failed to generate questions. Please try again.");
+      setError(err instanceof Error ? err.message : "Failed to generate questions. Please try again.");
       setView('home');
     }
   };

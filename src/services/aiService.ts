@@ -1,41 +1,58 @@
+import { GoogleGenAI, Type } from "@google/genai";
 import { Question } from "../types";
 
-/**
- * Generates quiz questions using Pollinations AI (no API key required).
- */
-export async function generateQuestions(category: string, count: number = 10, difficulty: string = 'medium'): Promise<Question[]> {
-  const systemPrompt = `You are a professional trivia generator. 
-  Generate exactly ${count} ${difficulty} difficulty trivia questions about "${category}".
-  Return ONLY a raw JSON array of objects. 
-  Each object must have: 
-  - "text": string
-  - "options": array of 4 strings
-  - "correctAnswer": string (must exactly match one of the options)
-  - "explanation": string (brief interesting fact)
-  Do not include markdown formatting or any text outside the JSON.`;
+// In AI Studio, the GEMINI_API_KEY is automatically provided in the environment.
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  const url = `https://text.pollinations.ai/${encodeURIComponent(systemPrompt)}?json=true&seed=${Date.now()}`;
+export async function generateQuestions(category: string, count: number = 10, difficulty: string = 'medium'): Promise<Question[]> {
+  const model = "gemini-3-flash-preview";
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Failed to fetch questions from AI");
+    const response = await ai.models.generateContent({
+      model,
+      contents: `Generate exactly ${count} ${difficulty} difficulty trivia questions about "${category}". 
+      Ensure incorrect options are plausible and the explanation is a short, interesting fun fact.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              text: { type: Type.STRING, description: "The quiz question" },
+              options: { 
+                type: Type.ARRAY, 
+                items: { type: Type.STRING },
+                description: "Exactly 4 options"
+              },
+              correctAnswer: { type: Type.STRING, description: "The matching correct answer" },
+              explanation: { type: Type.STRING, description: "Interesting fact about the answer" }
+            },
+            required: ["text", "options", "correctAnswer", "explanation"]
+          }
+        }
+      }
+    });
 
-    const text = await response.text();
-    // Sometimes the API might still wrap it in markdown or return extra text, 
-    // so we try to extract the JSON array part.
-    const jsonMatch = text.match(/\[.*\]/s);
-    const jsonStr = jsonMatch ? jsonMatch[0] : text;
+    const questions = response.text;
+    if (!questions) throw new Error("AI returned empty content");
     
-    const parsed = JSON.parse(jsonStr);
-
-    if (!Array.isArray(parsed)) throw new Error("Invalid response format");
+    const parsed = JSON.parse(questions);
+    
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error("Invalid output format from AI");
+    }
 
     return parsed.map((q: any, i: number) => ({
-      ...q,
+      text: q.text || "Unknown Question",
+      options: Array.isArray(q.options) && q.options.length === 4 ? q.options : ["A", "B", "C", "D"],
+      correctAnswer: q.correctAnswer || "",
+      explanation: q.explanation || "No additional context available.",
       id: `q-${i}-${Date.now()}`
     }));
   } catch (error) {
-    console.error("AI Generation Error:", error);
-    throw error;
+    console.error("Quiz Generation Error:", error);
+    // Throwing a cleaner error message for the UI
+    throw new Error(error instanceof Error ? error.message : "The AI is currently busy. Please try again in a moment.");
   }
 }
